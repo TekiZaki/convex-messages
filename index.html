@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Convex Chat</title>
+    <title>Convex Chat (with Auth)</title>
 
     <!-- Bootstrap CSS -->
     <link
@@ -14,52 +14,64 @@
     />
 
     <style>
-      /* Make the body a light gray */
       body {
         background-color: #f8f9fa;
       }
-      /* Create a card-based layout for the chat, constrained to a max height */
       .chat-card {
         height: 85vh;
         max-height: 800px;
         display: flex;
         flex-direction: column;
       }
-      /* Make the message list container scrollable */
       .chat-messages {
         flex: 1;
         overflow-y: auto;
       }
+      /* Hide elements by default */
+      #signed-in,
+      #signed-out {
+        display: none;
+      }
     </style>
   </head>
   <body>
-    <main class="container my-4">
+    <!-- This div will be shown to signed-out users -->
+    <div
+      id="signed-out"
+      class="container text-center vh-100 d-flex flex-column justify-content-center"
+    >
+      <h1 class="mb-4">Welcome to Convex Chat</h1>
+      <p class="lead">Please sign in to continue.</p>
+      <div class="mt-3">
+        <button id="sign-in-button" class="btn btn-primary btn-lg">
+          Sign In
+        </button>
+      </div>
+    </div>
+
+    <!-- This div will be shown to signed-in users -->
+    <main id="signed-in" class="container my-4">
       <div class="card shadow-sm chat-card">
-        <div class="card-header bg-primary text-white">
+        <div
+          class="card-header bg-primary text-white d-flex justify-content-between align-items-center"
+        >
           <h1 class="h4 mb-0">Convex Chat</h1>
+          <!-- User info and sign out button -->
+          <div id="user-info">
+            <span id="username-display" class="me-2"></span>
+            <button id="sign-out-button" class="btn btn-light btn-sm">
+              Sign Out
+            </button>
+          </div>
         </div>
 
-        <!-- Messages will be rendered inside this scrollable div -->
         <div class="card-body p-0 chat-messages">
-          <ul class="list-group list-group-flush messages-list">
-            <!-- Messages injected by JS here -->
-          </ul>
+          <ul class="list-group list-group-flush messages-list"></ul>
         </div>
 
-        <!-- The form is placed in the card footer -->
         <div class="card-footer p-3">
           <form id="chat-form">
             <div class="input-group">
-              <!-- Username Input -->
-              <input
-                type="text"
-                id="username"
-                class="form-control"
-                placeholder="Your name"
-                style="max-width: 150px"
-                required
-              />
-              <!-- Message Input -->
               <input
                 type="text"
                 id="message"
@@ -74,68 +86,87 @@
       </div>
     </main>
 
-    <!-- Load Convex client library -->
+    <!-- Convex and Clerk Client Libraries -->
     <script src="https://unpkg.com/convex@1.3.1/dist/browser.bundle.js"></script>
-
     <script>
-      // IMPORTANT: Replace with your actual Convex deployment URL
+      // IMPORTANT: Replace with your actual Convex and Clerk keys
       const CONVEX_URL = "https://jovial-dodo-936.convex.cloud";
+      const CLERK_PUBLISHABLE_KEY =
+        "pk_test_Z29yZ2VvdXMtbmV3dC05My5jbGVyay5hY2NvdW50cy5kZXYk"; // <-- PASTE YOUR CLERK PUBLISHABLE KEY HERE
 
       // Initialize Convex client
       const client = new convex.ConvexClient(CONVEX_URL);
-
-      // We use `anyApi` for simplicity in a single HTML file setup.
-      // In a full project with a build step, you'd import `api` from "./convex/_generated/api".
       const api = convex.anyApi;
 
-      // Get references to our DOM elements
+      // Initialize Clerk frontend
+      const clerk = new convex.Clerk(CLERK_PUBLISHABLE_KEY);
+
+      // DOM Elements
+      const signedInDiv = document.getElementById("signed-in");
+      const signedOutDiv = document.getElementById("signed-out");
+      const signInButton = document.getElementById("sign-in-button");
+      const signOutButton = document.getElementById("sign-out-button");
+      const usernameDisplay = document.getElementById("username-display");
       const chatForm = document.getElementById("chat-form");
-      const usernameInput = document.getElementById("username");
       const messageInput = document.getElementById("message");
       const messagesContainer = document.querySelector(".chat-messages");
       const messagesList = document.querySelector(".messages-list");
 
-      // Handle form submission
+      let unsubscribe = null;
+
+      // Use Clerk to manage authentication state
+      clerk.onUserUpdate(async (user) => {
+        client.setAuth(
+          async () => await clerk.session?.getToken({ template: "convex" })
+        );
+
+        if (user) {
+          // User is signed in
+          signedInDiv.style.display = "block";
+          signedOutDiv.style.display = "none";
+          usernameDisplay.textContent =
+            user.fullName || user.primaryEmailAddress.emailAddress;
+
+          // Subscribe to messages only when logged in
+          if (!unsubscribe) {
+            unsubscribe = client.onUpdate(api.messages.list, {}, (messages) => {
+              messagesList.innerHTML = "";
+              for (const message of messages.reverse()) {
+                const li = document.createElement("li");
+                li.className = "list-group-item";
+                li.innerHTML = `<strong>${message.author}:</strong> ${message.body}`;
+                messagesList.appendChild(li);
+              }
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            });
+          }
+        } else {
+          // User is signed out
+          signedInDiv.style.display = "none";
+          signedOutDiv.style.display = "block";
+
+          // Unsubscribe from messages when logged out
+          if (unsubscribe) {
+            unsubscribe();
+            unsubscribe = null;
+          }
+        }
+      });
+      clerk.load();
+
+      // Event Listeners for auth buttons
+      signInButton.addEventListener("click", () => clerk.openSignIn({}));
+      signOutButton.addEventListener("click", () => clerk.signOut());
+
+      // Handle form submission for sending messages
       chatForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        const username = usernameInput.value.trim();
         const message = messageInput.value.trim();
-
-        if (username && message) {
-          // Call the 'send' mutation with the author and body
-          client.mutation(api.messages.send, {
-            body: message,
-            author: username,
-          });
-          // Clear the message input and keep focus on it
+        if (message) {
+          // The mutation no longer needs an author argument
+          client.mutation(api.messages.send, { body: message });
           messageInput.value = "";
           messageInput.focus();
-        }
-      });
-
-      // Subscribe to the 'list' query to get real-time message updates
-      client.onUpdate(api.messages.list, {}, (messages) => {
-        console.log("Received messages:", messages);
-        messagesList.innerHTML = "";
-
-        // The query returns messages newest-first (`order("desc")`).
-        // We reverse them on the client to display oldest-first, so new messages appear at the bottom.
-        for (const message of messages.reverse()) {
-          const li = document.createElement("li");
-          li.className = "list-group-item";
-          // Use innerHTML to easily add the <strong> tag
-          li.innerHTML = `<strong>${message.author}:</strong> ${message.body}`;
-          messagesList.appendChild(li);
-        }
-
-        // Automatically scroll to the bottom of the message list
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      });
-
-      // Optional: Log any errors from the Convex client
-      client.onTransition((update) => {
-        if (update.type === "transitionFailed") {
-          console.error("Convex transition failed:", update.error);
         }
       });
     </script>
