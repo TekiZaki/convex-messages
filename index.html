@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Convex Chat (with Auth)</title>
+    <title>Convex Chat (with Clerk Components)</title>
 
     <!-- Bootstrap CSS -->
     <link
@@ -27,42 +27,35 @@
         flex: 1;
         overflow-y: auto;
       }
-      /* Hide elements by default */
+      /* Hide our app containers by default */
       #signed-in,
       #signed-out {
         display: none;
       }
+      /* Center the sign-in component */
+      #sign-in-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
     </style>
   </head>
   <body>
-    <!-- This div will be shown to signed-out users -->
-    <div
-      id="signed-out"
-      class="container text-center vh-100 d-flex flex-column justify-content-center"
-    >
-      <h1 class="mb-4">Welcome to Convex Chat</h1>
-      <p class="lead">Please sign in to continue.</p>
-      <div class="mt-3">
-        <button id="sign-in-button" class="btn btn-primary btn-lg">
-          Sign In
-        </button>
-      </div>
+    <!-- This div will contain the Clerk <SignIn> component -->
+    <div id="signed-out">
+      <div id="sign-in-container"></div>
     </div>
 
-    <!-- This div will be shown to signed-in users -->
+    <!-- This is our main application, shown only to signed-in users -->
     <main id="signed-in" class="container my-4">
       <div class="card shadow-sm chat-card">
         <div
           class="card-header bg-primary text-white d-flex justify-content-between align-items-center"
         >
           <h1 class="h4 mb-0">Convex Chat</h1>
-          <!-- User info and sign out button -->
-          <div id="user-info">
-            <span id="username-display" class="me-2"></span>
-            <button id="sign-out-button" class="btn btn-light btn-sm">
-              Sign Out
-            </button>
-          </div>
+          <!-- The Clerk <UserButton> component will be mounted here -->
+          <div id="user-button-container"></div>
         </div>
 
         <div class="card-body p-0 chat-messages">
@@ -86,87 +79,112 @@
       </div>
     </main>
 
-    <!-- Convex and Clerk Client Libraries -->
+    <!-- 1. LOAD CLERK JS -->
+    <script
+      async
+      crossorigin="anonymous"
+      data-clerk-publishable-key="pk_test_Z29yZ2VvdXMtbmV3dC05My5jbGVyay5hY2NvdW50cy5kZXYk"
+      src="https://gorgeous-newt-93.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+      type="text/javascript"
+    ></script>
+
+    <!-- Load Convex client library -->
     <script src="https://unpkg.com/convex@1.3.1/dist/browser.bundle.js"></script>
+
+    <!-- 2. APPLICATION LOGIC -->
     <script>
-      // IMPORTANT: Replace with your actual Convex and Clerk keys
-      const CONVEX_URL = "https://jovial-dodo-936.convex.cloud";
-      const CLERK_PUBLISHABLE_KEY =
-        "pk_test_Z29yZ2VvdXMtbmV3dC05My5jbGVyay5hY2NvdW50cy5kZXYk"; // <-- PASTE YOUR CLERK PUBLISHABLE KEY HERE
+      // Wait for the window to load before running any code
+      window.addEventListener("load", async function () {
+        // --- ALL APPLICATION LOGIC IS NOW SAFELY INSIDE THIS LISTENER ---
 
-      // Initialize Convex client
-      const client = new convex.ConvexClient(CONVEX_URL);
-      const api = convex.anyApi;
+        // IMPORTANT: Replace with your actual Convex deployment URL
+        const CONVEX_URL = "https://jovial-dodo-936.convex.cloud";
 
-      // Initialize Clerk frontend
-      const clerk = new convex.Clerk(CLERK_PUBLISHABLE_KEY);
+        const Clerk = window.Clerk;
+        try {
+          // Load the Clerk client
+          await Clerk.load();
+          console.log("ClerkJS loaded");
 
-      // DOM Elements
-      const signedInDiv = document.getElementById("signed-in");
-      const signedOutDiv = document.getElementById("signed-out");
-      const signInButton = document.getElementById("sign-in-button");
-      const signOutButton = document.getElementById("sign-out-button");
-      const usernameDisplay = document.getElementById("username-display");
-      const chatForm = document.getElementById("chat-form");
-      const messageInput = document.getElementById("message");
-      const messagesContainer = document.querySelector(".chat-messages");
-      const messagesList = document.querySelector(".messages-list");
+          // Initialize Convex client
+          const client = new convex.ConvexClient(CONVEX_URL);
+          const api = convex.anyApi;
 
-      let unsubscribe = null;
+          // Link Convex auth to Clerk
+          client.setAuth(
+            async () => await Clerk.session?.getToken({ template: "convex" })
+          );
 
-      // Use Clerk to manage authentication state
-      clerk.onUserUpdate(async (user) => {
-        client.setAuth(
-          async () => await clerk.session?.getToken({ template: "convex" })
-        );
+          // Get DOM Elements
+          const signedInDiv = document.getElementById("signed-in");
+          const signedOutDiv = document.getElementById("signed-out");
+          const signInContainer = document.getElementById("sign-in-container");
+          const userButtonContainer = document.getElementById(
+            "user-button-container"
+          );
+          const chatForm = document.getElementById("chat-form");
+          const messageInput = document.getElementById("message");
+          const messagesContainer = document.querySelector(".chat-messages");
+          const messagesList = document.querySelector(".messages-list");
 
-        if (user) {
-          // User is signed in
-          signedInDiv.style.display = "block";
-          signedOutDiv.style.display = "none";
-          usernameDisplay.textContent =
-            user.fullName || user.primaryEmailAddress.emailAddress;
+          let unsubscribe = null;
 
-          // Subscribe to messages only when logged in
-          if (!unsubscribe) {
-            unsubscribe = client.onUpdate(api.messages.list, {}, (messages) => {
-              messagesList.innerHTML = "";
-              for (const message of messages.reverse()) {
-                const li = document.createElement("li");
-                li.className = "list-group-item";
-                li.innerHTML = `<strong>${message.author}:</strong> ${message.body}`;
-                messagesList.appendChild(li);
+          // Use Clerk.addListener to react to authentication state changes
+          Clerk.addListener(({ user }) => {
+            if (user) {
+              // User is signed in
+              signedOutDiv.style.display = "none";
+              signedInDiv.style.display = "block";
+
+              // Mount the <UserButton> component
+              Clerk.mountUserButton(userButtonContainer);
+
+              // Subscribe to messages only when logged in
+              if (!unsubscribe) {
+                unsubscribe = client.onUpdate(
+                  api.messages.list,
+                  {},
+                  (messages) => {
+                    messagesList.innerHTML = "";
+                    for (const message of messages.reverse()) {
+                      const li = document.createElement("li");
+                      li.className = "list-group-item";
+                      li.innerHTML = `<strong>${message.author}:</strong> ${message.body}`;
+                      messagesList.appendChild(li);
+                    }
+                    messagesContainer.scrollTop =
+                      messagesContainer.scrollHeight;
+                  }
+                );
               }
-              messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            });
-          }
-        } else {
-          // User is signed out
-          signedInDiv.style.display = "none";
-          signedOutDiv.style.display = "block";
+            } else {
+              // User is signed out
+              signedInDiv.style.display = "none";
+              signedOutDiv.style.display = "block";
 
-          // Unsubscribe from messages when logged out
-          if (unsubscribe) {
-            unsubscribe();
-            unsubscribe = null;
-          }
-        }
-      });
-      clerk.load();
+              // Mount the <SignIn> component
+              Clerk.mountSignIn(signInContainer);
 
-      // Event Listeners for auth buttons
-      signInButton.addEventListener("click", () => clerk.openSignIn({}));
-      signOutButton.addEventListener("click", () => clerk.signOut());
+              // Unsubscribe from messages when logged out to prevent errors
+              if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+              }
+            }
+          });
 
-      // Handle form submission for sending messages
-      chatForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const message = messageInput.value.trim();
-        if (message) {
-          // The mutation no longer needs an author argument
-          client.mutation(api.messages.send, { body: message });
-          messageInput.value = "";
-          messageInput.focus();
+          // Handle form submission for sending messages
+          chatForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (message) {
+              client.mutation(api.messages.send, { body: message });
+              messageInput.value = "";
+              messageInput.focus();
+            }
+          });
+        } catch (e) {
+          console.error("Error in Clerk/Convex integration:", e);
         }
       });
     </script>
