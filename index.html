@@ -131,14 +131,20 @@
 
           // Use Clerk.addListener to react to authentication state changes
           Clerk.addListener(({ user }) => {
+            // THIS IS THE URL OF YOUR APPLICATION ON GITHUB PAGES
+            const APP_URL = "https://tekizaki.github.io/convex-messages/";
+
             if (user) {
               // User is signed in
               signedOutDiv.style.display = "none";
               signedInDiv.style.display = "block";
 
               // Mount the <UserButton> component
-              Clerk.mountUserButton(userButtonContainer);
+              Clerk.mountUserButton(userButtonContainer, {
+                afterSignOutUrl: APP_URL,
+              });
 
+              // ... (the rest of the sign-in logic is the same)
               // Subscribe to messages only when logged in
               if (!unsubscribe) {
                 unsubscribe = client.onUpdate(
@@ -163,8 +169,12 @@
               signedOutDiv.style.display = "block";
 
               // Mount the <SignIn> component
-              Clerk.mountSignIn(signInContainer);
+              Clerk.mountSignIn(signInContainer, {
+                redirectUrl: APP_URL, // For email link flows
+                afterSignInUrl: APP_URL, // For interactive flows
+              });
 
+              // ... (the rest of the sign-out logic is the same)
               // Unsubscribe from messages when logged out to prevent errors
               if (unsubscribe) {
                 unsubscribe();
@@ -173,6 +183,7 @@
             }
           });
 
+          // ... (the chatForm event listener is the same)
           // Handle form submission for sending messages
           chatForm.addEventListener("submit", (e) => {
             e.preventDefault();
